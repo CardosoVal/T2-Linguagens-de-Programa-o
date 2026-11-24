@@ -1,0 +1,696 @@
+"""
+REPLATE - recebe, responde e avisa sobre doações (versão para terminal).
+
+Como rodar:
+    python replate.py
+
+Fluxo:
+    nome -> MENU
+        1 - Quero doar            (escolhe os itens, monta o carrinho e finaliza)
+        2 - Ver itens para doação (lista de itens; 1 volta para o menu)
+        3 - Preciso de uma doação (igual ao "Quero doar", mas sem a opção "Outro")
+        4 - Gerar PDF do banco de dados (salva todos os registros em um PDF)
+
+Tudo o que é doado ou pedido fica salvo em replate.db (SQLite, já vem com o
+Python). Ao finalizar, o REPLATE avisa quando uma doação combina com um pedido.
+Para ver os registros salvos, digite o código de admin (CODIGO_ADMIN) no
+primeiro campo, onde o programa pede o nome. Lá também dá para salvar os
+registros em PDF (o arquivo é criado ao lado do replate.db).
+"""
+
+import sqlite3
+import textwrap
+import unicodedata
+from contextlib import closing
+from datetime import datetime
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Configurações
+# ---------------------------------------------------------------------------
+CODIGO_ADMIN = "JOOJADMIN"  # digitado no lugar do nome para ver o banco de dados
+ARQUIVO_BANCO = Path(__file__).resolve().with_name("replate.db")  # ao lado do script
+LARGURA = 60                # largura da "tela" do terminal
+QTD_MAXIMA = 999            # maior quantidade aceita por item
+TAM_MAXIMO_OUTRO = 60       # tamanho máximo do texto do item "Outro"
+ROTULOS = {"doacao": "DOAÇÃO", "pedido": "PEDIDO"}
+
+DICA = (
+    "Dica rápida: antes de separar ou comprar os itens, confirme com a "
+    "instituição, igreja ou campanha o que está em maior falta e verifique "
+    "prazos de validade e condições de conservação."
+)
+
+# Itens de exemplo, por categoria. Para incluir ou tirar algo, é só editar aqui.
+CATEGORIAS = [
+    {
+        "nome": "Alimentos (além da cesta básica)",
+        "nota": "Frutas e legumes frescos só quando a entrega for imediata e "
+                "a campanha aceitar perecíveis.",
+        "itens": [
+            "Leite longa vida (integral ou semidesnatado)",
+            "Leite em pó",
+            "Pão de forma",
+            "Biscoitos/bolachas",
+            "Torradas",
+            "Margarina",
+            "Manteiga",
+            "Carnes enlatadas",
+            "Salsicha em lata",
+            "Sardinha enlatada",
+            "Atum enlatado",
+            "Frutas e legumes frescos",
+            "Água mineral (garrafões ou fardos)",
+        ],
+    },
+    {
+        "nome": "Higiene pessoal",
+        "itens": [
+            "Sabonete (em barra ou líquido)",
+            "Shampoo",
+            "Condicionador",
+            "Creme dental",
+            "Escova de dente",
+            "Papel higiênico",
+            "Absorventes higiênicos",
+            "Desodorante",
+            "Lenços umedecidos",
+            "Fraldas (infantis ou geriátricas)",
+            "Álcool em gel",
+            "Máscaras descartáveis",
+        ],
+    },
+    {
+        "nome": "Limpeza doméstica",
+        "itens": [
+            "Detergente líquido",
+            "Sabão em barra",
+            "Sabão em pó ou lava-roupas líquido",
+            "Água sanitária",
+            "Desinfetante",
+            "Esponjas de limpeza",
+            "Panos de prato",
+            "Panos de chão",
+            "Sacos de lixo (vários tamanhos)",
+            "Buchas/esponjas de aço",
+        ],
+    },
+    {
+        "nome": "Roupas, calçados e cama/mesa/banho (novos ou usados)",
+        "nota": "Roupas e calçados só em bom estado e, no caso dos calçados, "
+                "com pares completos.",
+        "itens": [
+            "Camisetas",
+            "Calças",
+            "Bermudas",
+            "Blusas de frio/agasalhos",
+            "Tênis",
+            "Chinelos",
+            "Botas",
+            "Cobertores",
+            "Mantas",
+            "Edredons",
+            "Lençóis",
+            "Fronhas",
+            "Toalhas de banho/rosto",
+        ],
+    },
+    {
+        "nome": "Utensílios domésticos e móveis",
+        "nota": "Conforme a necessidade da campanha. Fogão, geladeira, colchão, "
+                "cama, mesa e cadeiras geralmente exigem transporte próprio e "
+                "triagem prévia.",
+        "itens": [
+            "Panelas",
+            "Talheres",
+            "Pratos",
+            "Copos e canecas",
+            "Garrafas térmicas",
+            "Potes plásticos com tampa",
+            "Fogão",
+            "Geladeira",
+            "Colchão",
+            "Cama",
+            "Mesa",
+            "Cadeiras",
+        ],
+    },
+    {
+        "nome": "Outros itens importantes",
+        "nota": "Doação de sangue e trabalho voluntário valem quando o "
+                "objetivo não é apenas material.",
+        "itens": [
+            "Pets: ração para cães e gatos",
+            "Pets: comedouros",
+            "Pets: coleiras",
+            "Pets: produtos antipulgas",
+            "Escolar/Infantil: cadernos",
+            "Escolar/Infantil: lápis",
+            "Escolar/Infantil: canetas",
+            "Escolar/Infantil: mochilas",
+            "Escolar/Infantil: brinquedos educativos",
+            "Escolar/Infantil: livros infantis",
+            "Doação de sangue",
+            "Trabalho voluntário",
+        ],
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Telas
+# ---------------------------------------------------------------------------
+def banner():
+    print("=" * LARGURA)
+    print("R E P L A T E".center(LARGURA))
+    print("Conectando quem pode doar a quem precisa".center(LARGURA))
+    print("=" * LARGURA)
+
+
+def titulo(texto):
+    print("\n" + "=" * LARGURA)
+    print(texto.center(LARGURA))
+    print("=" * LARGURA)
+
+
+def caixa(*linhas):
+    print("\n" + "=" * LARGURA)
+    for texto in linhas:
+        print(f"  {texto}")
+    print("=" * LARGURA)
+
+
+# ---------------------------------------------------------------------------
+# Entrada de dados (tudo o que a pessoa digita passa por aqui)
+# ---------------------------------------------------------------------------
+def ler_inteiro(pergunta, minimo, maximo, padrao=None):
+    """Repete a pergunta até a pessoa digitar um número inteiro válido.
+    Se 'padrao' for dado, apertar só Enter devolve esse valor."""
+    while True:
+        texto = input(pergunta).strip()
+        if texto == "" and padrao is not None:
+            return padrao
+        try:
+            numero = int(texto)
+        except ValueError:
+            numero = None
+        if numero is not None and minimo <= numero <= maximo:
+            return numero
+        print(f"  Valor inválido. Digite um número de {minimo} a {maximo}.")
+
+
+def confirmar(pergunta):
+    """Pergunta sim/não e devolve True ou False."""
+    while True:
+        resposta = input(f"{pergunta} (s/n): ").strip().lower()
+        if resposta in ("s", "sim"):
+            return True
+        if resposta in ("n", "nao", "não"):
+            return False
+        print("  Responda com s (sim) ou n (não).")
+
+
+def menu(cabecalho, opcoes, voltar):
+    """Mostra opções numeradas (1, 2, 3...) e devolve a escolhida. 0 = voltar."""
+    print(f"\n{cabecalho}")
+    for numero, texto in enumerate(opcoes, start=1):
+        print(f"  {numero} - {texto}")
+    print(f"  0 - {voltar}")
+    return ler_inteiro("Escolha uma opção: ", 0, len(opcoes))
+
+
+def limpar_texto(texto):
+    """Tira espaços sobrando e junta letras com acento 'soltas' (normalização NFC)."""
+    return " ".join(unicodedata.normalize("NFC", texto).split())
+
+
+def nome_valido(nome):
+    """Só aceita letras (com acento) e espaços: sem números nem caracteres especiais."""
+    return nome != "" and all(c.isalpha() or c == " " for c in nome)
+
+
+def pedir_nome():
+    """Primeiro input: pede o nome até ser válido (ou o código de admin)."""
+    while True:
+        entrada = limpar_texto(input("Digite o seu nome: "))
+        if entrada == CODIGO_ADMIN or nome_valido(entrada):
+            return entrada
+        print("  Nome inválido: use só letras e espaços (sem números ou "
+              "caracteres especiais). Tente de novo.")
+
+
+# ---------------------------------------------------------------------------
+# Banco de dados (SQLite)
+# ---------------------------------------------------------------------------
+# Saldo por item: tudo o que foi doado menos tudo o que foi pedido.
+# Positivo = sobrou doação; negativo = tem pedido sem atender.
+SQL_SALDO = """
+    SELECT i.item,
+           SUM(CASE r.tipo WHEN 'doacao' THEN i.quantidade ELSE -i.quantidade END)
+    FROM itens i
+    JOIN registros r ON r.id = i.registro_id
+    GROUP BY i.item
+"""
+
+
+def conectar():
+    """Abre o banco (criando o arquivo e as tabelas na primeira vez)."""
+    conexao = sqlite3.connect(str(ARQUIVO_BANCO))
+    conexao.execute("PRAGMA foreign_keys = ON")
+    conexao.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS registros (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            data_hora TEXT NOT NULL,
+            nome      TEXT NOT NULL,
+            tipo      TEXT NOT NULL CHECK (tipo IN ('doacao', 'pedido'))
+        );
+        CREATE TABLE IF NOT EXISTS itens (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            registro_id INTEGER NOT NULL REFERENCES registros(id),
+            item        TEXT NOT NULL,
+            quantidade  INTEGER NOT NULL CHECK (quantidade > 0)
+        );
+        """
+    )
+    return conexao
+
+
+def salvar_registro(nome, tipo, carrinho):
+    """Salva a doação/pedido e devolve os avisos: lista de (item, quantidade) do
+    carrinho que combinam com o que já estava no banco (pedido x doação)."""
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with closing(conectar()) as conexao, conexao:  # 'conexao' sozinho = transação
+        saldo = dict(conexao.execute(SQL_SALDO).fetchall())  # antes de salvar este
+        cursor = conexao.execute(
+            "INSERT INTO registros (data_hora, nome, tipo) VALUES (?, ?, ?)",
+            (agora, nome, tipo),
+        )
+        conexao.executemany(
+            "INSERT INTO itens (registro_id, item, quantidade) VALUES (?, ?, ?)",
+            [(cursor.lastrowid, item, qtd) for item, qtd in carrinho.items()],
+        )
+
+    avisos = []
+    for item, qtd in carrinho.items():
+        # pedido combina com doação que sobrou; doação combina com pedido sem atender
+        disponivel = saldo.get(item, 0) if tipo == "pedido" else -saldo.get(item, 0)
+        if disponivel > 0:
+            avisos.append((item, min(disponivel, qtd)))
+    return avisos
+
+
+def ler_registros():
+    """Lê tudo o que está salvo: uma lista com um dicionário por doação/pedido."""
+    with closing(conectar()) as conexao:
+        linhas = conexao.execute(
+            "SELECT id, data_hora, nome, tipo FROM registros ORDER BY id"
+        ).fetchall()
+        registros = []
+        for reg_id, data_hora, nome, tipo in linhas:
+            itens = conexao.execute(
+                "SELECT quantidade, item FROM itens WHERE registro_id = ? ORDER BY id",
+                (reg_id,),
+            ).fetchall()
+            registros.append({
+                "id": reg_id,
+                "data": datetime.strptime(data_hora, "%Y-%m-%d %H:%M:%S"),
+                "nome": nome,
+                "tipo": tipo,
+                "itens": itens,  # lista de (quantidade, item)
+            })
+    return registros
+
+
+def cabecalho_registro(registro):
+    """Primeira linha de cada registro: número, data, tipo e nome."""
+    return (f"#{registro['id']}  {registro['data']:%d/%m/%Y %H:%M}  "
+            f"{ROTULOS[registro['tipo']]}  -  {registro['nome']}")
+
+
+def resumo_registros(registros):
+    doacoes = sum(1 for r in registros if r["tipo"] == "doacao")
+    pedidos = len(registros) - doacoes
+    return f"Total: {len(registros)} registro(s) - {doacoes} doação(ões) e {pedidos} pedido(s)."
+
+
+# ---------------------------------------------------------------------------
+# PDF (escrito à mão, só com a biblioteca padrão: não precisa instalar nada)
+# ---------------------------------------------------------------------------
+PDF_LARGURA, PDF_ALTURA = 595, 842  # página A4, em pontos
+PDF_MARGEM = 50
+PDF_ENTRELINHA = 15                 # altura de cada linha
+PDF_COLUNAS = 68                    # caracteres por linha (com folga para maiúsculas)
+NORMAL, NEGRITO = b"F1", b"F2"      # fontes do PDF: Helvetica e Helvetica-Bold
+
+
+def pdf_texto(texto):
+    """Texto -> string de PDF. A codificação cp1252 cobre os acentos do
+    português; letras de outros alfabetos viram '?'."""
+    dados = texto.encode("cp1252", errors="replace")
+    dados = dados.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
+    return b"(" + dados + b")"
+
+
+def linhas_pdf(fonte, tamanho, recuo, texto):
+    """Quebra o texto em linhas que cabem na largura da página."""
+    partes = textwrap.wrap(texto, PDF_COLUNAS) or [""]
+    return [(fonte, tamanho, recuo, parte) for parte in partes]
+
+
+def paginar(blocos):
+    """Distribui os blocos (um registro por bloco) nas páginas. Um bloco só é
+    dividido entre duas páginas se não couber inteiro em uma."""
+    por_pagina = (PDF_ALTURA - 2 * PDF_MARGEM - 10) // PDF_ENTRELINHA
+    paginas = [[]]
+    for bloco in blocos:
+        livres = por_pagina - len(paginas[-1])
+        if len(bloco) > livres and len(bloco) <= por_pagina:
+            paginas.append([])
+        for linha in bloco:
+            if len(paginas[-1]) == por_pagina:
+                paginas.append([])
+            paginas[-1].append(linha)
+    return paginas
+
+
+def conteudo_pagina(linhas, numero, total):
+    """Comandos de desenho de uma página: o texto e o rodapé."""
+    comandos = []
+    y = PDF_ALTURA - PDF_MARGEM
+    for fonte, tamanho, recuo, texto in linhas:
+        y -= PDF_ENTRELINHA
+        if texto:
+            comandos.append(b"BT /%s %d Tf 1 0 0 1 %d %d Tm %s Tj ET"
+                            % (fonte, tamanho, PDF_MARGEM + recuo, y, pdf_texto(texto)))
+    comandos.append(b"0.5 w %d 40 m %d 40 l S" % (PDF_MARGEM, PDF_LARGURA - PDF_MARGEM))
+    comandos.append(b"BT /F1 8 Tf 1 0 0 1 %d 28 Tm %s Tj ET"
+                    % (PDF_MARGEM, pdf_texto(f"REPLATE - página {numero} de {total}")))
+    return b"\n".join(comandos)
+
+
+def escrever_pdf(caminho, paginas):
+    """Monta o arquivo PDF (objetos + tabela de posições) e grava em 'caminho'."""
+    total = len(paginas)
+    ids = [5 + 2 * i for i in range(total)]  # nº do objeto de cada página (o conteúdo é o seguinte)
+    objetos = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [" + b" ".join(b"%d 0 R" % n for n in ids)
+        + b"] /Count %d >>" % total,
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+    ]
+    for i, linhas in enumerate(paginas):
+        conteudo = conteudo_pagina(linhas, i + 1, total)
+        objetos.append(
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] "
+            b"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents %d 0 R >>"
+            % (PDF_LARGURA, PDF_ALTURA, ids[i] + 1)
+        )
+        objetos.append(b"<< /Length %d >>\nstream\n" % len(conteudo) + conteudo + b"\nendstream")
+    objetos.append(b"<< /Title " + pdf_texto("REPLATE - Registros salvos")
+                   + b" /Producer (REPLATE) >>")
+
+    pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    posicoes = []
+    for numero, corpo in enumerate(objetos, start=1):
+        posicoes.append(len(pdf))
+        pdf += b"%d 0 obj\n" % numero + corpo + b"\nendobj\n"
+    inicio_xref = len(pdf)
+    pdf += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objetos) + 1)
+    for posicao in posicoes:
+        pdf += b"%010d 00000 n \n" % posicao
+    pdf += (b"trailer\n<< /Size %d /Root 1 0 R /Info %d 0 R >>\nstartxref\n%d\n%%%%EOF\n"
+            % (len(objetos) + 1, len(objetos), inicio_xref))
+    Path(caminho).write_bytes(bytes(pdf))
+
+
+def gerar_pdf_registros(caminho, registros, agora):
+    """Monta o PDF com os registros (um bloco por registro) e grava em 'caminho'."""
+    blocos = [
+        linhas_pdf(NEGRITO, 14, 0, "REPLATE - Registros salvos (admin)")
+        + linhas_pdf(NORMAL, 10, 0, f"Gerado em {agora:%d/%m/%Y %H:%M}")
+        + linhas_pdf(NORMAL, 10, 0, resumo_registros(registros))
+        + linhas_pdf(NORMAL, 10, 0, "")
+    ]
+    for registro in registros:
+        bloco = linhas_pdf(NEGRITO, 10, 0, cabecalho_registro(registro))
+        for qtd, item in registro["itens"]:
+            bloco += linhas_pdf(NORMAL, 10, 16, f"{qtd} x {item}")
+        bloco += linhas_pdf(NORMAL, 10, 0, "")
+        blocos.append(bloco)
+    escrever_pdf(caminho, paginar(blocos))
+
+
+# ---------------------------------------------------------------------------
+# Modo admin
+# ---------------------------------------------------------------------------
+def salvar_registros_pdf(registros):
+    """Opção do admin: grava os registros em um PDF, ao lado do banco de dados.
+    O nome leva data e hora, então cada exportação cria um arquivo novo."""
+    agora = datetime.now()
+    caminho = ARQUIVO_BANCO.with_name(f"registros_replate_{agora:%Y-%m-%d_%H-%M-%S}.pdf")
+    try:
+        gerar_pdf_registros(caminho, registros, agora)
+    except OSError as erro:
+        print(f"\n  Não foi possível salvar o PDF ({erro}).")
+        return
+    print(f"\n  [OK] PDF salvo em: {caminho}")
+
+
+def gerar_pdf_do_banco():
+    """Opção 4 do menu: lê o banco de dados e salva todos os registros em um PDF."""
+    try:
+        registros = ler_registros()
+    except sqlite3.Error as erro:
+        print(f"\n  Não foi possível ler o banco de dados: {erro}")
+        return
+    if not registros:
+        print("\n  Nenhum registro salvo ainda: não há nada para colocar no PDF.")
+        return
+    salvar_registros_pdf(registros)
+
+
+def modo_admin():
+    """Mostra tudo o que está salvo no banco de dados e oferece salvar em PDF."""
+    titulo("REGISTROS SALVOS (ADMIN)")
+    print(f"Banco de dados: {ARQUIVO_BANCO}")
+    try:
+        registros = ler_registros()
+    except sqlite3.Error as erro:
+        print(f"\nNão foi possível ler o banco de dados: {erro}")
+        return
+    if not registros:
+        print("\nNenhum registro salvo ainda.")
+        return
+
+    for registro in registros:
+        print("\n" + cabecalho_registro(registro))
+        for qtd, item in registro["itens"]:
+            print(f"     {qtd} x {item}")
+    print("\n" + resumo_registros(registros))
+
+    while True:
+        if menu("ADMIN", ["Salvar registros em PDF"], "Sair") == 0:
+            return
+        salvar_registros_pdf(registros)
+
+
+# ---------------------------------------------------------------------------
+# Carrinho
+# ---------------------------------------------------------------------------
+def mostrar_carrinho(carrinho):
+    print("\n--- SEU CARRINHO ---")
+    if not carrinho:
+        print("  (vazio)")
+    for numero, (item, qtd) in enumerate(carrinho.items(), start=1):
+        print(f"  {numero}. {qtd} x {item}")
+
+
+def adicionar_ao_carrinho(carrinho, item, qtd):
+    carrinho[item] = min(carrinho.get(item, 0) + qtd, QTD_MAXIMA)
+    print(f"  [+] Adicionado: {item} (no carrinho: {carrinho[item]})")
+
+
+def escolher_item(carrinho, categoria):
+    """Lista os itens de uma categoria e põe no carrinho o que a pessoa escolher."""
+    while True:
+        print(f"\n--- {categoria['nome']} ---")
+        if categoria.get("nota"):
+            print(textwrap.fill("Obs.: " + categoria["nota"], LARGURA))
+        escolha = menu("Qual item?", categoria["itens"], "Voltar às categorias")
+        if escolha == 0:
+            return
+        item = categoria["itens"][escolha - 1]
+        qtd = ler_inteiro("Quantidade (Enter = 1): ", 1, QTD_MAXIMA, padrao=1)
+        adicionar_ao_carrinho(carrinho, item, qtd)
+
+
+def adicionar_outro(carrinho):
+    """Só para quem vai doar: item que não está na lista."""
+    while True:
+        texto = limpar_texto(input("Qual item você quer doar? (Enter para cancelar): "))
+        if texto == "":
+            print("  Nada foi adicionado.")
+            return
+        if len(texto) <= TAM_MAXIMO_OUTRO:
+            break
+        print(f"  Descrição muito longa (máximo de {TAM_MAXIMO_OUTRO} caracteres).")
+    qtd = ler_inteiro("Quantidade (Enter = 1): ", 1, QTD_MAXIMA, padrao=1)
+    adicionar_ao_carrinho(carrinho, "Outro: " + texto[0].upper() + texto[1:], qtd)
+
+
+def gerenciar_carrinho(carrinho):
+    """Ver o carrinho e alterar: mudar quantidade, remover um item ou esvaziar."""
+    while True:
+        mostrar_carrinho(carrinho)
+        if not carrinho:
+            return
+        escolha = menu(
+            "O que deseja fazer?",
+            ["Alterar quantidade", "Remover um item", "Esvaziar o carrinho"],
+            "Voltar",
+        )
+        if escolha == 0:
+            return
+        if escolha == 3:
+            if confirmar("Remover todos os itens?"):
+                carrinho.clear()
+            continue
+        numero = ler_inteiro("Número do item (0 para cancelar): ", 0, len(carrinho))
+        if numero == 0:
+            continue
+        item = list(carrinho)[numero - 1]
+        if escolha == 1:
+            carrinho[item] = ler_inteiro(f"Nova quantidade de '{item}': ", 1, QTD_MAXIMA)
+        else:
+            del carrinho[item]
+            print(f"  [-] Removido: {item}")
+
+
+def finalizar(nome, tipo, carrinho):
+    """Confirma, salva no banco, agradece e avisa. Devolve True se concluiu."""
+    if not carrinho:
+        print("\n  Seu carrinho está vazio. Adicione pelo menos um item para finalizar.")
+        return False
+
+    mostrar_carrinho(carrinho)
+    if not confirmar("Confirmar e finalizar?"):
+        print("  Tudo bem, o carrinho continua aberto para você alterar.")
+        return False
+
+    try:
+        avisos = salvar_registro(nome, tipo, carrinho)
+    except sqlite3.Error as erro:
+        print(f"\n  Não foi possível salvar agora ({erro}). Tente finalizar de novo.")
+        return False
+
+    if tipo == "doacao":
+        caixa(f"Doação registrada, {nome}!",
+              "Você está ajudando quem precisa. Obrigado.")
+        if avisos:
+            print("\n  AVISO: tem gente esperando por itens da sua doação:")
+            for item, qtd in avisos:
+                print(f"   - {qtd} x {item}")
+    else:
+        caixa(f"Pedido registrado, {nome}!")
+        if avisos:
+            print("\n  AVISO: já existe doação registrada de:")
+            for item, qtd in avisos:
+                print(f"   - {qtd} x {item}")
+        print("\n  Itens sem doação ficam na lista: quem doar será avisado.")
+    return True
+
+
+def fluxo_carrinho(nome, tipo):
+    """Fluxo de 'Quero doar' (tipo 'doacao') e de 'Preciso de uma doação'
+    (tipo 'pedido'). É o mesmo fluxo; só quem doa tem a opção 'Outro'."""
+    doando = tipo == "doacao"
+    carrinho = {}  # item -> quantidade (mantém a ordem em que foram adicionados)
+
+    titulo("QUERO DOAR" if doando else "PRECISO DE UMA DOAÇÃO")
+    if doando:
+        print(textwrap.fill(DICA, LARGURA))
+
+    total_categorias = len(CATEGORIAS)
+    pos_outro = total_categorias + 1 if doando else None
+    pos_carrinho = total_categorias + (2 if doando else 1)
+    pos_finalizar = pos_carrinho + 1
+
+    while True:
+        opcoes = [categoria["nome"] for categoria in CATEGORIAS]
+        if doando:
+            opcoes.append("Outro (item que não está na lista)")
+        opcoes.append(f"Ver / alterar carrinho [{len(carrinho)}]")
+        opcoes.append("Finalizar")
+
+        pergunta = "O que você quer doar?" if doando else "Do que você precisa?"
+        escolha = menu(pergunta, opcoes, "Voltar ao menu")
+
+        if escolha == 0:
+            if not carrinho or confirmar("Voltar ao menu e descartar o carrinho?"):
+                return
+        elif escolha <= total_categorias:
+            escolher_item(carrinho, CATEGORIAS[escolha - 1])
+        elif escolha == pos_outro:
+            adicionar_outro(carrinho)
+        elif escolha == pos_carrinho:
+            gerenciar_carrinho(carrinho)
+        elif escolha == pos_finalizar:
+            if finalizar(nome, tipo, carrinho):
+                return
+
+
+def ver_itens():
+    """Opção 2 do menu: mostra os itens e espera a pessoa digitar 1 para voltar."""
+    titulo("ITENS PARA DOAÇÃO")
+    for numero, categoria in enumerate(CATEGORIAS, start=1):
+        print(f"\n{numero}. {categoria['nome']}")
+        for item in categoria["itens"]:
+            print(f"   - {item}")
+        if categoria.get("nota"):
+            print(textwrap.fill("Obs.: " + categoria["nota"], LARGURA,
+                                initial_indent="   ", subsequent_indent="         "))
+    print("\n" + textwrap.fill(DICA, LARGURA))
+    print("\n  1 - Voltar para a página de antes")
+    while input("Escolha uma opção: ").strip() != "1":
+        print("  Opção inválida. Digite 1 para voltar.")
+
+
+# ---------------------------------------------------------------------------
+# Programa principal
+# ---------------------------------------------------------------------------
+def main():
+    banner()
+    nome = pedir_nome()
+
+    if nome == CODIGO_ADMIN:
+        modo_admin()
+        return
+
+    print(f"\nOlá, {nome}! Seja bem-vindo(a) ao REPLATE.")
+    while True:
+        escolha = menu(
+            "MENU",
+            ["Quero doar", "Ver itens para doação", "Preciso de uma doação",
+             "Gerar PDF do banco de dados"],
+            "Sair",
+        )
+        if escolha == 1:
+            fluxo_carrinho(nome, "doacao")
+        elif escolha == 2:
+            ver_itens()
+        elif escolha == 3:
+            fluxo_carrinho(nome, "pedido")
+        elif escolha == 4:
+            gerar_pdf_do_banco()
+        else:
+            print(f"\nAté logo, {nome}! Obrigado por usar o REPLATE.")
+            return
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):  # Ctrl+C ou Ctrl+D / fim da entrada
+        print("\n\nREPLATE encerrado. Até logo!")
