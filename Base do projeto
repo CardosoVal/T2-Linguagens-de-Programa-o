@@ -1,0 +1,51 @@
+Apresente o tema de um sistema a ser desenvolvido.
+
+O projeto deve conter:
+
+• Nome da aplicação
+• Principais funcionalidades
+• Regras
+• Participantes
+
+
+NOME DA APLICAÇÃO
+
+REPLATE
+
+OBJETIVO
+
+Um sistema web que combate o desperdício de alimentos, conectando em tempo real famílias em vulnerabilidade, garantindo logística segura e dentro da legislação.
+
+
+PRINCIPAIS FUNCIONALIDADES
+
+Módulo Doador (Web):
+- Publicar oferta em 30 segundos: foto, tipo de produto, quantidade (kg/un), motivo (excedente do dia / próximo ao vencimento), validade, necessidade de refrigeração e horário limite para retirada
+- Dashboard de impacto: quantos kg doou e quantas pessoas alimentou
+
+Módulo Logística:
+- Rota otimizada para voluntários
+- Controle de cadeia de frio e tempo de exposição
+
+
+REGRAS
+
+Regra da Validade Segura: É proibido doar alimentos já vencidos. O sistema bloqueia automaticamente ofertas fora do prazo.
+
+Regra da Responsabilidade Legal: Baseado na Lei 14.016/2020 (Lei do Combate ao Desperdício). O doador é isento de responsabilidade civil/criminal se a doação foi feita dentro das condições de higiene informadas.
+
+Regra de Prioridade: A ordem de prioridade às famílias cadastradas no raio de 3km e qualquer usuário.
+
+Regra para Reserva: Após reservar, o receptor tem 60 minutos para retirar. Se não retirar, perde pontos de reputação e a oferta volta para o feed.
+
+Regra de Quantidade Justa: Para evitar revenda, famílias podem reservar no máximo 5 kg/dia ou 2 cestas por semana.
+
+Regra de Higiene: O doador deve informar obrigatoriamente como o alimento foi armazenado e se precisa de refrigeração. Alimentos que precisam de frio só podem ser transportados por um receptor que confirma ter caixa térmica.
+
+PARTICIPANTES 
+
+Gustavo Soto Di Filippo
+Luís Otávio Pereira Vasconcelos
+Valéria Cardoso da Silva 
+João Lucas Carvalho da Silveira
+
