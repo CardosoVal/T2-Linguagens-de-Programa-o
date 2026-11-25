@@ -1,23 +1,3 @@
-"""
-REPLATE - recebe, responde e avisa sobre doações (versão para terminal).
-
-Como rodar:
-    python replate.py
-
-Fluxo:
-    nome -> MENU
-        1 - Quero doar            (escolhe os itens, monta o carrinho e finaliza)
-        2 - Ver itens para doação (lista de itens; 1 volta para o menu)
-        3 - Preciso de uma doação (igual ao "Quero doar", mas sem a opção "Outro")
-        4 - Gerar PDF do banco de dados (salva todos os registros em um PDF)
-
-Tudo o que é doado ou pedido fica salvo em replate.db (SQLite, já vem com o
-Python). Ao finalizar, o REPLATE avisa quando uma doação combina com um pedido.
-Para ver os registros salvos, digite o código de admin (CODIGO_ADMIN) no
-primeiro campo, onde o programa pede o nome. Lá também dá para salvar os
-registros em PDF (o arquivo é criado ao lado do replate.db).
-"""
-
 import sqlite3
 import textwrap
 import unicodedata
