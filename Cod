@@ -8,11 +8,11 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Configurações
 # ---------------------------------------------------------------------------
-CODIGO_ADMIN = "JOOJADMIN"  # digitado no lugar do nome para ver o banco de dados
-ARQUIVO_BANCO = Path(__file__).resolve().with_name("replate.db")  # ao lado do script
-LARGURA = 60                # largura da "tela" do terminal
-QTD_MAXIMA = 999            # maior quantidade aceita por item
-TAM_MAXIMO_OUTRO = 60       # tamanho máximo do texto do item "Outro"
+CODIGO_ADMIN = "JOOJADMIN"
+ARQUIVO_BANCO = Path(__file__).resolve().with_name("replate.db")
+LARGURA = 60
+QTD_MAXIMA = 999
+TAM_MAXIMO_OUTRO = 60
 ROTULOS = {"doacao": "DOAÇÃO", "pedido": "PEDIDO"}
 
 DICA = (
