@@ -5,9 +5,6 @@ from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Configurações
-# ---------------------------------------------------------------------------
 CODIGO_ADMIN = "JOOJADMIN"
 ARQUIVO_BANCO = Path(__file__).resolve().with_name("replate.db")
 LARGURA = 60
@@ -21,7 +18,6 @@ DICA = (
     "prazos de validade e condições de conservação."
 )
 
-# Itens de exemplo, por categoria. Para incluir ou tirar algo, é só editar aqui.
 CATEGORIAS = [
     {
         "nome": "Alimentos (além da cesta básica)",
@@ -136,10 +132,6 @@ CATEGORIAS = [
     },
 ]
 
-
-# ---------------------------------------------------------------------------
-# Telas
-# ---------------------------------------------------------------------------
 def banner():
     print("=" * LARGURA)
     print("R E P L A T E".center(LARGURA))
@@ -160,12 +152,7 @@ def caixa(*linhas):
     print("=" * LARGURA)
 
 
-# ---------------------------------------------------------------------------
-# Entrada de dados (tudo o que a pessoa digita passa por aqui)
-# ---------------------------------------------------------------------------
 def ler_inteiro(pergunta, minimo, maximo, padrao=None):
-    """Repete a pergunta até a pessoa digitar um número inteiro válido.
-    Se 'padrao' for dado, apertar só Enter devolve esse valor."""
     while True:
         texto = input(pergunta).strip()
         if texto == "" and padrao is not None:
@@ -191,7 +178,6 @@ def confirmar(pergunta):
 
 
 def menu(cabecalho, opcoes, voltar):
-    """Mostra opções numeradas (1, 2, 3...) e devolve a escolhida. 0 = voltar."""
     print(f"\n{cabecalho}")
     for numero, texto in enumerate(opcoes, start=1):
         print(f"  {numero} - {texto}")
@@ -200,17 +186,14 @@ def menu(cabecalho, opcoes, voltar):
 
 
 def limpar_texto(texto):
-    """Tira espaços sobrando e junta letras com acento 'soltas' (normalização NFC)."""
     return " ".join(unicodedata.normalize("NFC", texto).split())
 
 
 def nome_valido(nome):
-    """Só aceita letras (com acento) e espaços: sem números nem caracteres especiais."""
-    return nome != "" and all(c.isalpha() or c == " " for c in nome)
+return nome != "" and all(c.isalpha() or c == " " for c in nome)
 
 
 def pedir_nome():
-    """Primeiro input: pede o nome até ser válido (ou o código de admin)."""
     while True:
         entrada = limpar_texto(input("Digite o seu nome: "))
         if entrada == CODIGO_ADMIN or nome_valido(entrada):
@@ -218,12 +201,6 @@ def pedir_nome():
         print("  Nome inválido: use só letras e espaços (sem números ou "
               "caracteres especiais). Tente de novo.")
 
-
-# ---------------------------------------------------------------------------
-# Banco de dados (SQLite)
-# ---------------------------------------------------------------------------
-# Saldo por item: tudo o que foi doado menos tudo o que foi pedido.
-# Positivo = sobrou doação; negativo = tem pedido sem atender.
 SQL_SALDO = """
     SELECT i.item,
            SUM(CASE r.tipo WHEN 'doacao' THEN i.quantidade ELSE -i.quantidade END)
@@ -234,11 +211,6 @@ SQL_SALDO = """
 
 
 def conectar():
-    """Abre o banco (criando o arquivo e as tabelas na primeira vez)."""
-    conexao = sqlite3.connect(str(ARQUIVO_BANCO))
-    conexao.execute("PRAGMA foreign_keys = ON")
-    conexao.executescript(
-        """
         CREATE TABLE IF NOT EXISTS registros (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
             data_hora TEXT NOT NULL,
@@ -257,8 +229,6 @@ def conectar():
 
 
 def salvar_registro(nome, tipo, carrinho):
-    """Salva a doação/pedido e devolve os avisos: lista de (item, quantidade) do
-    carrinho que combinam com o que já estava no banco (pedido x doação)."""
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with closing(conectar()) as conexao, conexao:  # 'conexao' sozinho = transação
         saldo = dict(conexao.execute(SQL_SALDO).fetchall())  # antes de salvar este
@@ -273,7 +243,6 @@ def salvar_registro(nome, tipo, carrinho):
 
     avisos = []
     for item, qtd in carrinho.items():
-        # pedido combina com doação que sobrou; doação combina com pedido sem atender
         disponivel = saldo.get(item, 0) if tipo == "pedido" else -saldo.get(item, 0)
         if disponivel > 0:
             avisos.append((item, min(disponivel, qtd)))
@@ -281,7 +250,6 @@ def salvar_registro(nome, tipo, carrinho):
 
 
 def ler_registros():
-    """Lê tudo o que está salvo: uma lista com um dicionário por doação/pedido."""
     with closing(conectar()) as conexao:
         linhas = conexao.execute(
             "SELECT id, data_hora, nome, tipo FROM registros ORDER BY id"
@@ -303,7 +271,6 @@ def ler_registros():
 
 
 def cabecalho_registro(registro):
-    """Primeira linha de cada registro: número, data, tipo e nome."""
     return (f"#{registro['id']}  {registro['data']:%d/%m/%Y %H:%M}  "
             f"{ROTULOS[registro['tipo']]}  -  {registro['nome']}")
 
@@ -313,10 +280,6 @@ def resumo_registros(registros):
     pedidos = len(registros) - doacoes
     return f"Total: {len(registros)} registro(s) - {doacoes} doação(ões) e {pedidos} pedido(s)."
 
-
-# ---------------------------------------------------------------------------
-# PDF (escrito à mão, só com a biblioteca padrão: não precisa instalar nada)
-# ---------------------------------------------------------------------------
 PDF_LARGURA, PDF_ALTURA = 595, 842  # página A4, em pontos
 PDF_MARGEM = 50
 PDF_ENTRELINHA = 15                 # altura de cada linha
@@ -325,7 +288,6 @@ NORMAL, NEGRITO = b"F1", b"F2"      # fontes do PDF: Helvetica e Helvetica-Bold
 
 
 def pdf_texto(texto):
-    """Texto -> string de PDF. A codificação cp1252 cobre os acentos do
     português; letras de outros alfabetos viram '?'."""
     dados = texto.encode("cp1252", errors="replace")
     dados = dados.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
@@ -333,13 +295,11 @@ def pdf_texto(texto):
 
 
 def linhas_pdf(fonte, tamanho, recuo, texto):
-    """Quebra o texto em linhas que cabem na largura da página."""
     partes = textwrap.wrap(texto, PDF_COLUNAS) or [""]
     return [(fonte, tamanho, recuo, parte) for parte in partes]
 
 
 def paginar(blocos):
-    """Distribui os blocos (um registro por bloco) nas páginas. Um bloco só é
     dividido entre duas páginas se não couber inteiro em uma."""
     por_pagina = (PDF_ALTURA - 2 * PDF_MARGEM - 10) // PDF_ENTRELINHA
     paginas = [[]]
@@ -355,7 +315,6 @@ def paginar(blocos):
 
 
 def conteudo_pagina(linhas, numero, total):
-    """Comandos de desenho de uma página: o texto e o rodapé."""
     comandos = []
     y = PDF_ALTURA - PDF_MARGEM
     for fonte, tamanho, recuo, texto in linhas:
@@ -370,7 +329,6 @@ def conteudo_pagina(linhas, numero, total):
 
 
 def escrever_pdf(caminho, paginas):
-    """Monta o arquivo PDF (objetos + tabela de posições) e grava em 'caminho'."""
     total = len(paginas)
     ids = [5 + 2 * i for i in range(total)]  # nº do objeto de cada página (o conteúdo é o seguinte)
     objetos = [
@@ -406,7 +364,6 @@ def escrever_pdf(caminho, paginas):
 
 
 def gerar_pdf_registros(caminho, registros, agora):
-    """Monta o PDF com os registros (um bloco por registro) e grava em 'caminho'."""
     blocos = [
         linhas_pdf(NEGRITO, 14, 0, "REPLATE - Registros salvos (admin)")
         + linhas_pdf(NORMAL, 10, 0, f"Gerado em {agora:%d/%m/%Y %H:%M}")
@@ -421,12 +378,7 @@ def gerar_pdf_registros(caminho, registros, agora):
         blocos.append(bloco)
     escrever_pdf(caminho, paginar(blocos))
 
-
-# ---------------------------------------------------------------------------
-# Modo admin
-# ---------------------------------------------------------------------------
 def salvar_registros_pdf(registros):
-    """Opção do admin: grava os registros em um PDF, ao lado do banco de dados.
     O nome leva data e hora, então cada exportação cria um arquivo novo."""
     agora = datetime.now()
     caminho = ARQUIVO_BANCO.with_name(f"registros_replate_{agora:%Y-%m-%d_%H-%M-%S}.pdf")
@@ -439,7 +391,6 @@ def salvar_registros_pdf(registros):
 
 
 def gerar_pdf_do_banco():
-    """Opção 4 do menu: lê o banco de dados e salva todos os registros em um PDF."""
     try:
         registros = ler_registros()
     except sqlite3.Error as erro:
@@ -452,7 +403,6 @@ def gerar_pdf_do_banco():
 
 
 def modo_admin():
-    """Mostra tudo o que está salvo no banco de dados e oferece salvar em PDF."""
     titulo("REGISTROS SALVOS (ADMIN)")
     print(f"Banco de dados: {ARQUIVO_BANCO}")
     try:
@@ -476,9 +426,6 @@ def modo_admin():
         salvar_registros_pdf(registros)
 
 
-# ---------------------------------------------------------------------------
-# Carrinho
-# ---------------------------------------------------------------------------
 def mostrar_carrinho(carrinho):
     print("\n--- SEU CARRINHO ---")
     if not carrinho:
@@ -493,7 +440,6 @@ def adicionar_ao_carrinho(carrinho, item, qtd):
 
 
 def escolher_item(carrinho, categoria):
-    """Lista os itens de uma categoria e põe no carrinho o que a pessoa escolher."""
     while True:
         print(f"\n--- {categoria['nome']} ---")
         if categoria.get("nota"):
@@ -507,7 +453,6 @@ def escolher_item(carrinho, categoria):
 
 
 def adicionar_outro(carrinho):
-    """Só para quem vai doar: item que não está na lista."""
     while True:
         texto = limpar_texto(input("Qual item você quer doar? (Enter para cancelar): "))
         if texto == "":
@@ -521,7 +466,6 @@ def adicionar_outro(carrinho):
 
 
 def gerenciar_carrinho(carrinho):
-    """Ver o carrinho e alterar: mudar quantidade, remover um item ou esvaziar."""
     while True:
         mostrar_carrinho(carrinho)
         if not carrinho:
@@ -549,7 +493,6 @@ def gerenciar_carrinho(carrinho):
 
 
 def finalizar(nome, tipo, carrinho):
-    """Confirma, salva no banco, agradece e avisa. Devolve True se concluiu."""
     if not carrinho:
         print("\n  Seu carrinho está vazio. Adicione pelo menos um item para finalizar.")
         return False
@@ -583,7 +526,6 @@ def finalizar(nome, tipo, carrinho):
 
 
 def fluxo_carrinho(nome, tipo):
-    """Fluxo de 'Quero doar' (tipo 'doacao') e de 'Preciso de uma doação'
     (tipo 'pedido'). É o mesmo fluxo; só quem doa tem a opção 'Outro'."""
     doando = tipo == "doacao"
     carrinho = {}  # item -> quantidade (mantém a ordem em que foram adicionados)
@@ -622,7 +564,6 @@ def fluxo_carrinho(nome, tipo):
 
 
 def ver_itens():
-    """Opção 2 do menu: mostra os itens e espera a pessoa digitar 1 para voltar."""
     titulo("ITENS PARA DOAÇÃO")
     for numero, categoria in enumerate(CATEGORIAS, start=1):
         print(f"\n{numero}. {categoria['nome']}")
@@ -636,10 +577,6 @@ def ver_itens():
     while input("Escolha uma opção: ").strip() != "1":
         print("  Opção inválida. Digite 1 para voltar.")
 
-
-# ---------------------------------------------------------------------------
-# Programa principal
-# ---------------------------------------------------------------------------
 def main():
     banner()
     nome = pedir_nome()
